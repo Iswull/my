@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+        #hint {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-family: Arial;
+            font-size: 24px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="hint">拖动面片到框架的对应位置</div>
+    <!-- 添加GSAP和Three.js库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js  "></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js  "></script>
+    <script>
+        let scene, camera, renderer, raycaster, mouse = new THREE.Vector2();
+        let selectedFace = null, initialPosition = new THREE.Vector3();
+        let faces = [], targetPositions = [];
+        let completedFaces = 0;
+
+        let initialEuler;
+        let initialDistance;
+        let targetPoint = new THREE.Vector3(0, 0, 0);
+        let isRotating = false;
+
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f0f0); // 浅灰色背景
+            
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+            camera.position.set(8, 8, 8);
+            camera.lookAt(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            // 添加环境光和方向光
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+
+            // 创建线框长方体
+            const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(3, 2, 4));
+            const lineMaterial = new THREE.LineBasicMaterial({ color: 0x999999 });
+            const wireframe = new THREE.LineSegments(edges, lineMaterial);
+            scene.add(wireframe);
+
+            // 创建可交互面片
+            const createFace = (width, height, color) => {
+                const geometry = new THREE.PlaneGeometry(width, height);
+                const material = new THREE.MeshPhongMaterial({
+                    color: color,
+                    transparent: true,
+                    opacity: 0.75,
+                    side: THREE.DoubleSide
+                });
+                return new THREE.Mesh(geometry, material);
+            };
+
+            // 面片参数设置（对应面颜色相同，采用更高级的颜色方案）
+            const faceParams = [
+                { size: [3, 2], color: 0x88aaff, pos: [0, 0, 2], rot: new THREE.Euler(0, 0, 0) },    // 前
+                { size: [3, 2], color: 0x88aaff, pos: [0, 0, -2], rot: new THREE.Euler(0, Math.PI, 0) },   // 后
+                { size: [4, 2], color: 0x88aaff, pos: [-1.5, 0, 0], rot: new THREE.Euler(0, Math.PI/2, 0) }, // 左
+                { size: [4, 2], color: 0x88aaff, pos: [1.5, 0, 0], rot: new THREE.Euler(0, -Math.PI/2, 0) },  // 右
+                { size: [3, 4], color: 0x88aaff, pos: [0, 1, 0], rot: new THREE.Euler(Math.PI/2, 0, 0) },    // 上
+                { size: [3, 4], color: 0x88aaff, pos: [0, -1, 0], rot: new THREE.Euler(-Math.PI/2, 0, 0) }    // 下
+            ];
+
+            faceParams.forEach((param, index) => {
+                const face = createFace(...param.size, param.color);
+                
+                if (index % 2 === 0) {
+                    face.position.set(
+                    (1 - 0.5) * 8,
+                    5, // 离地高度
+                    (index-2)  * 2
+                ); 
+                }
+                else{
+                // 面片平放在地面，随机散落
+                    face.position.set(
+                        (1 - 0.5) * 8,
+                        0.5, // 离地高度
+                        (index-2)  * 2
+                );
+                }
+                
+                // 面片平放，轻微随机旋转
+                face.rotation.set(
+                    0,
+                    0.5 * Math.PI,
+                    0
+                );
+                
+
+                scene.add(face);
+                faces.push({
+                    mesh: face,
+                    targetPos: new THREE.Vector3(...param.pos),
+                    targetRot: param.rot.clone()
+                });
+            });
+
+            document.addEventListener('mousedown', onMouseDown);
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onMouseDown(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+
+            const intersects = raycaster.intersectObjects(faces.map(f => f.mesh));
+            if (intersects.length > 0) {
+                selectedFace = intersects[0].object;
+                initialPosition.copy(selectedFace.position);
+                selectedFace.material.opacity = 0.5; // 选中时更透明
+            }
+            else {
+        isRotating = true;
+        initialMouseX = event.clientX;
+        initialMouseY = event.clientY;
+        initialEuler = camera.rotation.clone();
+        initialDistance = camera.position.distanceTo(targetPoint);
+    }
+        }
+
+        function onMouseMove(event) {
+            //if (!selectedFace) return;
+            if (selectedFace){
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+
+            const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+            const intersectPoint = new THREE.Vector3();
+            raycaster.setFromCamera(mouse, camera);
+            
+            if (raycaster.ray.intersectPlane(plane, intersectPoint)) {
+                selectedFace.position.copy(intersectPoint);
+            }
+        }
+        else if (isRotating) {
+        const deltaX = event.clientX - initialMouseX;
+        const deltaY = event.clientY - initialMouseY;
+
+        const sensitivity = 0.005; // 旋转灵敏度（弧度/像素）
+
+        // 计算角度变化
+        const deltaPhi = -deltaX * sensitivity; // 方位角变化（绕Y轴）
+        const deltaTheta = deltaY * sensitivity; // 仰角变化（绕X轴）
+
+        // 创建角度变化的欧拉角
+        const deltaEuler = new THREE.Euler(
+            deltaTheta, // 绕X轴旋转
+            deltaPhi,   // 绕Y轴旋转
+            0
+        );
+
+        // 计算新的欧拉角
+        //const newEuler = initialEuler.clone().add(deltaEuler);
+        const newEuler = new THREE.Euler(
+    initialEuler.x + deltaEuler.x,
+    initialEuler.y + deltaEuler.y,
+    initialEuler.z + deltaEuler.z
+);
+
+        // 计算方向向量
+        const direction = new THREE.Vector3(0, 0, -1); // 初始方向向量（-z轴）
+        direction.applyEuler(newEuler); // 应用旋转后的方向
+        direction.normalize();
+        direction.multiplyScalar(initialDistance); // 根据初始距离缩放
+
+        // 计算新位置：目标点减去方向向量（因为方向是朝向目标点的）
+        const newPosition = targetPoint.clone().sub(direction);
+
+        // 更新相机位置和方向
+        camera.position.copy(newPosition);
+        camera.lookAt(targetPoint);
+        camera.updateProjectionMatrix();
+        // 更新初始参数
+        initialEuler.add(deltaEuler);
+        initialMouseX = event.clientX;
+        initialMouseY = event.clientY;
+    
+        }
+    }
+
+        function onMouseUp() {
+            isRotating = false;
+            if (!selectedFace) return;
+
+            selectedFace.material.opacity = 0.75; // 恢复透明度
+            
+            let minDistance = Infinity;
+            let targetIndex = -1;
+
+            faces.forEach((face, index) => {
+                if (face.mesh === selectedFace) {
+                    const distance = selectedFace.position.distanceTo(face.targetPos);
+                    if (distance < 2) {
+                        targetIndex = index;
+                    }
+                }
+            });
+
+            if (targetIndex !== -1) {
+                gsap.to(selectedFace.position, {
+                    x: faces[targetIndex].targetPos.x,
+                    y: faces[targetIndex].targetPos.y,
+                    z: faces[targetIndex].targetPos.z,
+                    duration: 0.5,
+                    ease: "power3.out"
+                });
+
+                gsap.to(selectedFace.rotation, {
+                    x: faces[targetIndex].targetRot.x,
+                    y: faces[targetIndex].targetRot.y,
+                    z: faces[targetIndex].targetRot.z,
+                    duration: 0.8,
+                    ease: "elastic.out(1, 0.3)",
+                    onComplete: () => {
+                        completedFaces++;
+                        if (completedFaces === 6) {
+                            document.getElementById('hint').textContent = "🎉 长方体构建完成！";
+                        }
+                    }
+                });
+
+                faces = faces.filter((_, i) => i !== targetIndex);
+            } else {
+                gsap.to(selectedFace.position, {
+                    x: initialPosition.x,
+                    y: initialPosition.y,
+                    z: initialPosition.z,
+                    duration: 1,
+                    ease: "bounce.out"
+                });
+            }
+
+            selectedFace = null;
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        init();
+        animate();
+    </script>
+</body>
+</html> 
